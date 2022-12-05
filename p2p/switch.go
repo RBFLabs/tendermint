@@ -93,6 +93,17 @@ type Switch struct {
 	metrics *Metrics
 }
 
+func (sw *Switch) GetLinkLatencies() []*PeerLatency {
+	peers := sw.peers.List()
+	latencies := make([]*PeerLatency, len(peers))
+
+	for i, p := range peers {
+		latencies[i] = p.GetLinkLatency()
+	}
+
+	return latencies
+}
+
 // NetAddress returns the address the switch is listening on.
 func (sw *Switch) NetAddress() *NetAddress {
 	addr := sw.transport.NetAddress()

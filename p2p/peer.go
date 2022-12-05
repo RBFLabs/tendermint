@@ -42,6 +42,8 @@ type Peer interface {
 
 	SetRemovalFailed()
 	GetRemovalFailed() bool
+
+	GetLinkLatency() *PeerLatency
 }
 
 //----------------------------------------------------------
@@ -125,6 +127,12 @@ type peer struct {
 	removalAttemptFailed bool
 }
 
+type PeerLatency struct {
+	peerID   ID
+	remoteIP net.IP
+	latency  time.Duration
+}
+
 type PeerOption func(*peer)
 
 func newPeer(
@@ -159,6 +167,14 @@ func newPeer(
 	}
 
 	return p
+}
+
+func (p *peer) GetLinkLatency() *PeerLatency {
+	return &PeerLatency{
+		peerID:   p.ID(),
+		remoteIP: p.RemoteIP(),
+		latency:  p.mconn.GetLinkLatency(),
+	}
 }
 
 // String representation.
