@@ -127,6 +127,7 @@ type peer struct {
 	removalAttemptFailed bool
 }
 
+// latency in connection with peer
 type PeerLatency struct {
 	peerID   ID
 	remoteIP net.IP
