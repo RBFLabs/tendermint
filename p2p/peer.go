@@ -127,11 +127,22 @@ type peer struct {
 	removalAttemptFailed bool
 }
 
-// latency in connection with peer
 type PeerLatency struct {
 	peerID   ID
 	remoteIP net.IP
 	latency  time.Duration
+}
+
+func (pl *PeerLatency) GetPeerID() ID {
+	return pl.peerID
+}
+
+func (pl *PeerLatency) GetPeerRemoteIP() net.IP {
+	return pl.remoteIP
+}
+
+func (pl *PeerLatency) GetPeerLatency() time.Duration {
+	return pl.latency
 }
 
 type PeerOption func(*peer)
