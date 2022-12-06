@@ -130,7 +130,7 @@ type peer struct {
 type PeerLatency struct {
 	peerID   ID
 	remoteIP net.IP
-	latency  time.Duration
+	latency  int64 // in milliseconds
 }
 
 func (pl *PeerLatency) GetPeerID() ID {
@@ -141,7 +141,7 @@ func (pl *PeerLatency) GetPeerRemoteIP() net.IP {
 	return pl.remoteIP
 }
 
-func (pl *PeerLatency) GetPeerLatency() time.Duration {
+func (pl *PeerLatency) GetPeerLatency() int64 {
 	return pl.latency
 }
 
