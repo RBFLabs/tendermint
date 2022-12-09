@@ -632,7 +632,7 @@ FOR_LOOP:
 				// never block
 			}
 		case *tmp2p.Packet_PacketPong:
-			c.latency = time.Since(<-c.pingTimeCh).Milliseconds()
+			c.latency = time.Since(<-c.pingTimeCh).Milliseconds() / 2
 			c.pongTS = time.Now().UnixMilli()
 			c.Logger.Debug("Receive Pong, time latency", c.latency)
 			select {
