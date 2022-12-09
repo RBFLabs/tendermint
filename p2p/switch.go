@@ -94,7 +94,7 @@ type Switch struct {
 }
 
 func (sw *Switch) GetLinkLatencies() []*PeerLatency {
-	peers := sw.peers.List()
+	peers := sw.Peers().List()
 	latencies := make([]*PeerLatency, len(peers))
 
 	for i, p := range peers {

@@ -111,6 +111,7 @@ type MConnection struct {
 	// close conn if pong is not received in pongTimeout
 	pongTimer     *time.Timer
 	pongTimeoutCh chan bool // true - timeout, false - peer sent pong
+	pongTS        int64     // pong timestamp in  milliseconds
 	latency       int64     // latency in milliseconds
 
 	chStatsTimer *time.Ticker // update channel stats periodically
@@ -325,6 +326,10 @@ func (c *MConnection) String() string {
 
 func (c *MConnection) GetLinkLatency() int64 {
 	return c.latency
+}
+
+func (c *MConnection) GetPongTS() int64 {
+	return c.pongTS
 }
 
 func (c *MConnection) flush() {
@@ -628,6 +633,7 @@ FOR_LOOP:
 			}
 		case *tmp2p.Packet_PacketPong:
 			c.latency = time.Since(<-c.pingTimeCh).Milliseconds()
+			c.pongTS = time.Now().UnixMilli()
 			c.Logger.Debug("Receive Pong, time latency", c.latency)
 			select {
 			case c.pongTimeoutCh <- false:
