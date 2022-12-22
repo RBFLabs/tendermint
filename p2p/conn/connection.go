@@ -106,7 +106,7 @@ type MConnection struct {
 
 	flushTimer *timer.ThrottleTimer // flush writes as necessary but throttled.
 	pingTimer  *time.Ticker         // send pings periodically
-	pingTimeCh chan time.Time
+	pingTimeCh chan int64
 
 	// close conn if pong is not received in pongTimeout
 	pongTimer     *time.Timer
@@ -227,7 +227,7 @@ func (c *MConnection) OnStart() error {
 	c.flushTimer = timer.NewThrottleTimer("flush", c.config.FlushThrottle)
 	c.pingTimer = time.NewTicker(c.config.PingInterval)
 	c.pongTimeoutCh = make(chan bool, 1)
-	c.pingTimeCh = make(chan time.Time, 1)
+	c.pingTimeCh = make(chan int64, 1)
 	c.chStatsTimer = time.NewTicker(updateStats)
 	c.quitSendRoutine = make(chan struct{})
 	c.doneSendRoutine = make(chan struct{})
@@ -453,7 +453,7 @@ FOR_LOOP:
 		case <-c.pingTimer.C:
 			c.Logger.Debug("Send Ping")
 			_n, err = protoWriter.WriteMsg(mustWrapPacket(&tmp2p.PacketPing{}))
-			c.pingTimeCh <- time.Now()
+			c.pingTimeCh <- time.Now().UTC().UnixMilli()
 			if err != nil {
 				c.Logger.Error("Failed to send PacketPing", "err", err)
 				break SELECTION
@@ -632,8 +632,8 @@ FOR_LOOP:
 				// never block
 			}
 		case *tmp2p.Packet_PacketPong:
-			c.latency = time.Since(<-c.pingTimeCh).Milliseconds() / 2
-			c.pongTS = time.Now().UnixMilli()
+			c.pongTS = time.Now().UTC().UnixMilli()
+			c.latency = (c.pongTS - <-c.pingTimeCh) / 2
 			c.Logger.Debug("Receive Pong, time latency", c.latency)
 			select {
 			case c.pongTimeoutCh <- false:
