@@ -84,6 +84,7 @@ func (e errTooEarlyToDial) Error() string {
 type Reactor struct {
 	p2p.BaseReactor
 
+	mx                *sync.Mutex
 	book              AddrBook
 	config            *ReactorConfig
 	ensurePeersPeriod time.Duration // TODO: should go in the config
@@ -92,12 +93,17 @@ type Reactor struct {
 	requestsSent         *cmap.CMap // ID->struct{}: unanswered send requests
 	lastReceivedRequests *cmap.CMap // ID->time.Time: last time peer requested from us
 
-	seedAddrs []*p2p.NetAddress
-
+	seedAddrs      []*p2p.NetAddress
+	seedCandidates map[p2p.ID]*SeedCandidate
 	attemptsToDial sync.Map // address (string) -> {number of attempts (int), last time dialed (time.Time)}
 
 	// seed/crawled mode fields
 	crawlPeerInfos map[p2p.ID]crawlPeerInfo
+}
+
+type SeedCandidate struct {
+	lastNodeActivityTS int64
+	*p2p.NetAddress
 }
 
 func (r *Reactor) minReceiveRequestInterval() time.Duration {
@@ -119,6 +125,12 @@ type ReactorConfig struct {
 	// Maximum pause when redialing a persistent peer (if zero, exponential backoff is used)
 	PersistentPeersMaxDialPeriod time.Duration
 
+	// Maximum period when we are waiting for next package from peer
+	WaitForNextPkgMaxPeriod time.Duration
+
+	// Detect seed nodes every this period
+	DetectSeedNodesPeriod time.Duration
+
 	// Seeds is a list of addresses reactor may use
 	// if it can't connect to peers in the addrbook.
 	Seeds []string
@@ -137,6 +149,7 @@ func NewReactor(b AddrBook, config *ReactorConfig) *Reactor {
 		ensurePeersPeriod:    defaultEnsurePeersPeriod,
 		requestsSent:         cmap.NewCMap(),
 		lastReceivedRequests: cmap.NewCMap(),
+		seedCandidates:       make(map[p2p.ID]*SeedCandidate),
 		crawlPeerInfos:       make(map[p2p.ID]crawlPeerInfo),
 	}
 	r.BaseReactor = *p2p.NewBaseReactor("PEX", r)
@@ -235,6 +248,66 @@ func (r *Reactor) logErrAddrBook(err error) {
 	}
 }
 
+func (r *Reactor) RegisterSeedCandidate(src Peer) error {
+	// seed node connection can't be persistent
+	// (we will not redial it after disconnect)
+	if src.IsPersistent() {
+		return nil
+	}
+
+	addr, err := src.NodeInfo().NetAddress()
+	if err != nil {
+		return err
+	}
+
+	if r.IsSeed(addr) {
+		return nil
+	}
+
+	r.mx.Lock()
+	candidate, ok := r.seedCandidates[src.ID()]
+	if !ok {
+		candidate = &SeedCandidate{
+			lastNodeActivityTS: time.Now().UTC().UnixMilli(),
+			NetAddress: &p2p.NetAddress{
+				ID:   addr.ID,
+				IP:   addr.IP,
+				Port: addr.Port,
+			},
+		}
+		r.seedCandidates[src.ID()] = candidate
+
+		r.mx.Unlock()
+	} else {
+		candidate.lastNodeActivityTS = time.Now().UTC().UnixMilli()
+		r.seedCandidates[src.ID()] = candidate
+
+		r.mx.Unlock()
+	}
+	return nil
+}
+
+func (r *Reactor) DetectSeedNodes() {
+	for {
+		now := time.Now().UnixMilli()
+		maxWaitForNextMsg := r.config.WaitForNextPkgMaxPeriod.Milliseconds()
+		currentSeeds := r.seedAddrs
+
+		r.mx.Lock()
+		for _, src := range r.seedCandidates {
+			if (now - src.lastNodeActivityTS) > maxWaitForNextMsg {
+				currentSeeds = append(currentSeeds, &p2p.NetAddress{
+					ID:   src.NetAddress.ID,
+					IP:   src.NetAddress.IP,
+					Port: src.NetAddress.Port,
+				})
+			}
+		}
+		r.mx.Unlock()
+		time.Sleep(r.config.DetectSeedNodesPeriod)
+	}
+}
+
 // Receive implements Reactor by handling incoming PEX messages.
 func (r *Reactor) Receive(chID byte, src Peer, msgBytes []byte) {
 	msg, err := decodeMsg(msgBytes)
@@ -281,6 +354,9 @@ func (r *Reactor) Receive(chID byte, src Peer, msgBytes []byte) {
 				return
 			}
 			r.SendAddrs(src, r.book.GetSelection())
+			if err := r.RegisterSeedCandidate(src); err != nil {
+				r.Logger.Error("error registering seed node candidates", err)
+			}
 		}
 
 	case *tmp2p.PexAddrs:
@@ -351,6 +427,15 @@ func (r *Reactor) RequestAddrs(p Peer) {
 	p.Send(PexChannel, mustEncode(&tmp2p.PexRequest{}))
 }
 
+func (r *Reactor) IsSeed(srcAddr *p2p.NetAddress) bool {
+	for _, seedAddr := range r.seedAddrs {
+		if seedAddr.Equals(srcAddr) {
+			return true
+		}
+	}
+	return false
+}
+
 // ReceiveAddrs adds the given addrs to the addrbook if theres an open
 // request for this peer and deletes the open request.
 // If there's no open request for the src peer, it returns an error.
@@ -366,12 +451,9 @@ func (r *Reactor) ReceiveAddrs(addrs []*p2p.NetAddress, src Peer) error {
 		return err
 	}
 
-	srcIsSeed := false
-	for _, seedAddr := range r.seedAddrs {
-		if seedAddr.Equals(srcAddr) {
-			srcIsSeed = true
-			break
-		}
+	srcIsSeed := r.IsSeed(srcAddr)
+	if err := r.RegisterSeedCandidate(src); err != nil {
+		r.Logger.Error("error registering seed node candidates", err)
 	}
 
 	for _, netAddr := range addrs {
